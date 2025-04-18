@@ -21,23 +21,17 @@ def get_firebase_config():
             "universe_domain": st.secrets.firebase.universe_domain
         }
         
-        # Configuración adicional de Firebase
-        firebase_config = {
-            "apiKey": st.secrets.firebase.api_key,
-            "authDomain": st.secrets.firebase.auth_domain,
-            "projectId": st.secrets.firebase.project_id,
-            "storageBucket": st.secrets.firebase.storage_bucket,
-            "appId": st.secrets.firebase.app_id
+        # Return credentials directly without creating a temporary file
+        return {
+            "credentials": config,
+            "config": {
+                "apiKey": st.secrets.firebase.api_key,
+                "authDomain": st.secrets.firebase.auth_domain,
+                "projectId": st.secrets.firebase.project_id,
+                "storageBucket": st.secrets.firebase.storage_bucket,
+                "appId": st.secrets.firebase.app_id
+            }
         }
-        
-        # Guardar las credenciales en un archivo temporal para firebase-admin
-        credentials_path = Path("temp_creds.json")
-        with open(credentials_path, "w") as f:
-            json.dump(config, f)
-            
-        firebase_config["serviceAccount"] = str(credentials_path)
-        
-        return firebase_config
         
     except Exception as e:
         st.error(f"""
@@ -46,7 +40,3 @@ def get_firebase_config():
         Error: {str(e)}
         """)
         raise e
-    finally:
-        # Limpiar archivo temporal de credenciales
-        if os.path.exists("temp_creds.json"):
-            os.remove("temp_creds.json")

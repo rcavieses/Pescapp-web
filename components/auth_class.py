@@ -3,6 +3,7 @@ import firebase_admin
 from firebase_admin import auth, credentials, firestore
 from firebase_admin._auth_utils import UserNotFoundError
 import time
+from config.firebase_config import get_firebase_config
 
 class Authentication:
     def __init__(self):
@@ -11,17 +12,27 @@ class Authentication:
             firebase_admin.get_app()
         except ValueError:
             try:
-                creds = credentials.Certificate("creds.json")
-                firebase_admin.initialize_app(creds)
-                print("✅ Firebase inicializado correctamente con credenciales.")
+                firebase_config = get_firebase_config()
+                if firebase_config and "credentials" in firebase_config:
+                    creds = credentials.Certificate(firebase_config["credentials"])
+                    firebase_admin.initialize_app(creds)
+                    print("✅ Firebase inicializado correctamente con credenciales.")
+                else:
+                    raise Exception("No se encontraron credenciales válidas en Streamlit secrets")
             except Exception as e:
                 print(f"❌ Error al inicializar Firebase: {e}")
+                st.error("Error al conectar con Firebase. Verifique sus credenciales en .streamlit/secrets.toml")
+                return None
         
-        # Obtain Firestore client
-        self.db = firestore.client()
-        
-        # Add token refresh interval (30 minutes)
-        self.token_refresh_interval = 1800
+        try:
+            # Obtain Firestore client
+            self.db = firestore.client()
+            # Add token refresh interval (30 minutes)
+            self.token_refresh_interval = 1800
+        except Exception as e:
+            print(f"❌ Error al obtener cliente Firestore: {e}")
+            st.error("Error al conectar con Firestore. Verifique sus credenciales en .streamlit/secrets.toml")
+            return None
 
     def login(self):
         """

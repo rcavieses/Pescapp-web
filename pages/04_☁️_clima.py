@@ -66,12 +66,27 @@ def save_location(user_id, name, lat, lon):
 
 # --- Data fetchers ---
 def get_current_weather(lat, lon):
-    url = (
-        f"https://api.openweathermap.org/data/2.5/weather"
-        f"?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}"
-        f"&units=metric&lang=es"
-    )
-    return requests.get(url).json()
+    try:
+        url = (
+            f"https://api.openweathermap.org/data/2.5/weather"
+            f"?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}"
+            f"&units=metric&lang=es"
+        )
+        response = requests.get(url)
+        response.raise_for_status()  # Raise an exception for bad status codes
+        data = response.json()
+        
+        # Validate required fields
+        if "main" not in data or "weather" not in data or "wind" not in data:
+            raise ValueError("Invalid API response format")
+            
+        return data
+    except requests.RequestException as e:
+        st.error(f"Error al obtener datos del clima: {str(e)}")
+        return None
+    except (ValueError, KeyError) as e:
+        st.error(f"Error en el formato de respuesta: {str(e)}")
+        return None
 
 def get_weather_forecast(lat, lon):
     url = (
@@ -110,23 +125,30 @@ def get_tide_data(lat, lon):
 
 # --- Display functions ---
 def display_current_weather(w):
-    cols = st.columns(3)
-    temp = w["main"]["temp"]
-    feels = w["main"]["feels_like"]
-    humidity = w["main"]["humidity"]
-    pressure = w["main"]["pressure"]
-    wind = w["wind"]["speed"]
-    deg = w["wind"]["deg"]
-    desc = w["weather"][0]["description"].capitalize()
+    if not w:
+        st.error("No hay datos del clima disponibles")
+        return
+        
+    try:
+        cols = st.columns(3)
+        temp = w["main"]["temp"]
+        feels = w["main"]["feels_like"]
+        humidity = w["main"]["humidity"]
+        pressure = w["main"]["pressure"]
+        wind = w["wind"]["speed"]
+        deg = w["wind"]["deg"]
+        desc = w["weather"][0]["description"].capitalize()
 
-    def card(col, title, body):
-        with col:
-            st.info(f"**{title}**\n\n{body}")
+        def card(col, title, body):
+            with col:
+                st.info(f"**{title}**\n\n{body}")
 
-    card(cols[0], f"Temperatura: {temp}°C", f"Sensación: {feels}°C")
-    card(cols[1], f"Viento: {wind} m/s", f"Dirección: {deg}°")
-    card(cols[2], f"Humedad: {humidity}%", f"Presión: {pressure} hPa")
-    st.markdown(f"**Condición:** {desc}")
+        card(cols[0], f"Temperatura: {temp}°C", f"Sensación: {feels}°C")
+        card(cols[1], f"Viento: {wind} m/s", f"Dirección: {deg}°")
+        card(cols[2], f"Humedad: {humidity}%", f"Presión: {pressure} hPa")
+        st.markdown(f"**Condición:** {desc}")
+    except (KeyError, IndexError) as e:
+        st.error("Error al mostrar datos del clima: formato de datos inválido")
 
 def display_forecast_chart(forecast):
     df = pd.DataFrame([{
