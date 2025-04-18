@@ -235,22 +235,10 @@ La sección de meteorología proporciona datos críticos para la planificación 
   - Velocidad y dirección
   - Ráfagas
   - Rosa de los vientos
-- **Estado del Mar**:
-  - Altura de olas
-  - Período de olas
-  - Dirección del oleaje
+
 - **Presión Atmosférica**:
   - Valor actual
   - Tendencia
-
-#### 2. Pronóstico
-- **Predicción a 5 días**:
-  - Por hora para las primeras 48 horas
-  - Por períodos de 3 horas hasta 5 días
-- **Condiciones Esperadas**:
-  - Probabilidad de precipitación
-  - Visibilidad
-  - Cobertura de nubes
 
 #### 3. Mareas
 - **Tabla de Mareas**:
@@ -337,7 +325,7 @@ Permite gestionar la información personal y preferencias del usuario.
 - Privacidad
 - Accesibilidad
 
-![Perfil de usuario](./imagenes/perfil_usuario.png)
+![Perfil de usuario](./imagenes/perfil_de_usuario.png)
 *Figura 10: Formulario de perfil de usuario*
 
 ## Configuración
