@@ -82,4 +82,4 @@ Esta aplicación es un proyecto académico desarrollado con fines de investigaci
 [Especificar tipo de licencia]
 
 ---
-Desarrollado con ❤️ por el equipo de PescApp
+Desarrollado con ❤️ por el equipo de PescApp 🎣
