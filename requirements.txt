@@ -10,3 +10,4 @@ pydeck==0.8.0
 pytz==2023.3
 requests
 numpy
+scipy>=1.11.0

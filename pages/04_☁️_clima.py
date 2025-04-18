@@ -9,6 +9,8 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+from scipy.interpolate import CubicSpline
+import math
 
 # --- Page configuration ---
 st.set_page_config(
@@ -32,8 +34,9 @@ show_header(
 )
 
 # --- API keys & URLs (using Streamlit secrets) ---
-OPENWEATHER_API_KEY = st.secrets["openweather_api"]
+OPENWEATHER_API_KEY = st.secrets.openweather_api
 NOAA_API_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
+NOAA_STATIONS_URL = "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json"
 
 # --- Firestore helpers ---
 def load_saved_locations(user_id):
@@ -64,12 +67,80 @@ def save_location(user_id, name, lat, lon):
     except Exception as e:
         return False, f"Error al guardar ubicación: {e}"
 
+# --- Estaciones NOAA ---
+@st.cache_data(ttl=3600)  # Cache por 1 hora
+def get_noaa_stations():
+    """Obtiene la lista de estaciones NOAA disponibles"""
+    try:
+        response = requests.get(NOAA_STATIONS_URL)
+        if response.status_code != 200:
+            return []
+        
+        data = response.json()
+        stations = []
+        
+        for station in data.get('stations', []):
+            if station.get('tidal', False):  # Solo estaciones con datos de mareas
+                stations.append({
+                    'id': station.get('id', ''),
+                    'name': station.get('name', ''),
+                    'lat': station.get('lat', 0),
+                    'lng': station.get('lng', 0)
+                })
+                
+        return stations
+    except Exception as e:
+        st.error(f"Error al obtener estaciones NOAA: {str(e)}")
+        return []
+
+def find_nearest_station(lat, lon):
+    """Encuentra la estación NOAA más cercana a las coordenadas dadas"""
+    stations = get_noaa_stations()
+    
+    if not stations:
+        # Estación predeterminada como respaldo
+        return "9410170"  # San Diego, CA
+    
+    def haversine(lat1, lon1, lat2, lon2):
+        """Calcula la distancia entre dos puntos en la Tierra"""
+        R = 6371  # Radio de la Tierra en km
+        
+        dlat = math.radians(lat2 - lat1)
+        dlon = math.radians(lon2 - lon1)
+        
+        a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+        
+        return R * c
+    
+    nearest_station = None
+    min_distance = float('inf')
+    
+    for station in stations:
+        try:
+            station_lat = float(station['lat'])
+            station_lng = float(station['lng'])
+            distance = haversine(lat, lon, station_lat, station_lng)
+            
+            if distance < min_distance:
+                min_distance = distance
+                nearest_station = station
+        except (ValueError, TypeError):
+            continue
+    
+    if nearest_station:
+        st.info(f"Usando datos de la estación NOAA más cercana: {nearest_station['name']} (a {min_distance:.1f} km)")
+        return nearest_station['id']
+    else:
+        return "9410170"  # Estación predeterminada como respaldo
+
 # --- Data fetchers ---
 def get_current_weather(lat, lon):
     try:
+        api_key = st.secrets.openweather_api.get("openweather_api")
         url = (
             f"https://api.openweathermap.org/data/2.5/weather"
-            f"?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}"
+            f"?lat={lat}&lon={lon}&appid={api_key}"
             f"&units=metric&lang=es"
         )
         response = requests.get(url)
@@ -89,39 +160,88 @@ def get_current_weather(lat, lon):
         return None
 
 def get_weather_forecast(lat, lon):
-    url = (
-        f"https://api.openweathermap.org/data/2.5/forecast"
-        f"?lat={lat}&lon={lon}&appid={OPENWEATHER_API_KEY}"
-        f"&units=metric&lang=es"
-    )
-    return requests.get(url).json()
+    try:
+        api_key = st.secrets.openweather_api.get("openweather_api")
+        url = (
+            f"https://api.openweathermap.org/data/2.5/forecast"
+            f"?lat={lat}&lon={lon}&appid={api_key}"
+            f"&units=metric&lang=es"
+        )
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as e:
+        st.error(f"Error al obtener el pronóstico: {str(e)}")
+        return None
+    except (ValueError, KeyError) as e:
+        st.error(f"Error en el formato de respuesta del pronóstico: {str(e)}")
+        return None
 
 def get_tide_data(lat, lon):
-    # (Implement nearest NOAA‐station lookup as before)
-    station_id = "9410170"
-    start = datetime.now(pytz.UTC)
-    end = start + timedelta(days=2)
-    params = {
-        "begin_date": start.strftime("%Y%m%d"),
-        "end_date": end.strftime("%Y%m%d"),
-        "station": station_id,
-        "product": "predictions",
-        "datum": "MLLW",
-        "time_zone": "LST",
-        "interval": "hilo",
-        "units": "metric",
-        "format": "json"
-    }
-    data = requests.get(NOAA_API_URL, params=params).json()
-    tides = []
-    for pred in data.get("predictions", []):
-        dt = int(datetime.strptime(pred["t"], "%Y-%m-%d %H:%M").timestamp())
-        tides.append({
-            "dt": dt,
-            "type": "Pleamar" if pred["type"] == "H" else "Bajamar",
-            "height": float(pred["v"])
-        })
-    return tides
+    """Obtiene datos de mareas para la ubicación más cercana"""
+    try:
+        # Encontrar la estación NOAA más cercana
+        station_id = find_nearest_station(lat, lon)
+        
+        # Definir período de tiempo (2 días)
+        start = datetime.now(pytz.UTC)
+        end = start + timedelta(days=2)
+        
+        # Construir parámetros de consulta
+        params = {
+            "begin_date": start.strftime("%Y%m%d"),
+            "end_date": end.strftime("%Y%m%d"),
+            "station": station_id,
+            "product": "predictions",
+            "datum": "MLLW",  # Mean Lower Low Water
+            "time_zone": "LST",  # Local Standard Time
+            "interval": "hilo",  # Solo pleamar y bajamar
+            "units": "metric",
+            "format": "json"
+        }
+        
+        # Realizar la consulta a la API
+        response = requests.get(NOAA_API_URL, params=params)
+        
+        if response.status_code != 200:
+            st.warning(f"No se pudieron obtener datos de mareas para esta ubicación. Código: {response.status_code}")
+            return []
+            
+        data = response.json()
+        
+        # Si no hay predicciones, intentar con datos a intervalos
+        if "predictions" not in data or not data["predictions"]:
+            params["interval"] = "h"  # Datos horarios
+            response = requests.get(NOAA_API_URL, params=params)
+            data = response.json()
+        
+        # Procesar los datos de mareas
+        tides = []
+        
+        for pred in data.get("predictions", []):
+            try:
+                dt = int(datetime.strptime(pred["t"], "%Y-%m-%d %H:%M").timestamp())
+                
+                # Determinar si es pleamar o bajamar para datos hilo
+                if "type" in pred:
+                    tide_type = "Pleamar" if pred["type"] == "H" else "Bajamar"
+                else:
+                    # Para datos horarios, no tenemos el tipo directamente
+                    tide_type = "Nivel"
+                
+                tides.append({
+                    "dt": dt,
+                    "type": tide_type,
+                    "height": float(pred["v"])
+                })
+            except (ValueError, KeyError) as e:
+                continue
+        
+        return tides
+        
+    except Exception as e:
+        st.error(f"Error al obtener datos de mareas: {str(e)}")
+        return []
 
 # --- Display functions ---
 def display_current_weather(w):
@@ -151,73 +271,142 @@ def display_current_weather(w):
         st.error("Error al mostrar datos del clima: formato de datos inválido")
 
 def display_forecast_chart(forecast):
-    df = pd.DataFrame([{
-        "fecha": pd.to_datetime(item["dt"], unit="s"),
-        "temperatura": item["main"]["temp"],
-        "humedad": item["main"]["humidity"],
-        "viento": item["wind"]["speed"]
-    } for item in forecast["list"]])
-    fig = px.line(df, x="fecha", y=["temperatura", "viento", "humedad"],
-                  labels={"fecha": "Fecha y Hora", "value": "Valor", "variable": "Parámetro"},
-                  title="Pronóstico 5 días")
-    st.plotly_chart(fig, use_container_width=True)
+    if not forecast or "list" not in forecast:
+        st.error("No hay datos de pronóstico disponibles")
+        return
+    
+    try:
+        df = pd.DataFrame([{
+            "fecha": pd.to_datetime(item["dt"], unit="s"),
+            "temperatura": item["main"]["temp"],
+            "humedad": item["main"]["humidity"],
+            "viento": item["wind"]["speed"]
+        } for item in forecast["list"]])
+        
+        fig = px.line(df, x="fecha", y=["temperatura", "viento", "humedad"],
+                    labels={"fecha": "Fecha y Hora", "value": "Valor", "variable": "Parámetro"},
+                    title="Pronóstico 5 días")
+        st.plotly_chart(fig, use_container_width=True)
+    except (KeyError, ValueError) as e:
+        st.error(f"Error al procesar datos del pronóstico: {str(e)}")
+
+def display_tide_chart(tides):
+    if not tides:
+        st.warning("No hay datos de mareas disponibles para esta ubicación")
+        return
+        
+    try:
+        df = pd.DataFrame([{
+            "datetime": datetime.fromtimestamp(t["dt"]),
+            "altura": t["height"],
+            "tipo": t["type"]
+        } for t in tides])
+        
+        # Crear la figura
+        fig = go.Figure()
+        
+        # Agregar puntos para marcar pleamar y bajamar
+        fig.add_trace(go.Scatter(
+            x=df["datetime"],
+            y=df["altura"],
+            mode='markers+lines',
+            name='Puntos de marea',
+            marker=dict(
+                size=10,
+                color='rgb(200, 50, 50)',
+                symbol='circle'
+            ),
+            line=dict(
+                color='rgb(0, 100, 200)',
+                width=2
+            ),
+            text=df["tipo"],
+            hovertemplate='%{text}<br>Altura: %{y:.2f}m<br>%{x}<extra></extra>'
+        ))
+        
+        fig.update_layout(
+            title="Gráfica de Mareas",
+            xaxis_title="Fecha y Hora",
+            yaxis_title="Altura (m)",
+            hovermode='x unified',
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error al crear gráfica de mareas: {str(e)}")
 
 def display_tide_data(tides):
-    df = pd.DataFrame([{
-        "Fecha y Hora": datetime.fromtimestamp(t["dt"]).strftime("%d/%m/%Y %H:%M"),
-        "Tipo": t["type"],
-        "Altura (m)": t["height"]
-    } for t in tides])
-    st.subheader("Tabla de Mareas")
-    st.dataframe(df, use_container_width=True)
+    if not tides:
+        st.warning("No hay datos de mareas disponibles para esta ubicación")
+        return
+        
+    try:
+        df = pd.DataFrame([{
+            "Fecha y Hora": datetime.fromtimestamp(t["dt"]).strftime("%d/%m/%Y %H:%M"),
+            "Tipo": t["type"],
+            "Altura (m)": round(t["height"], 2)
+        } for t in tides])
+        st.subheader("Tabla de Mareas")
+        st.dataframe(df, use_container_width=True)
+        display_tide_chart(tides)
+    except Exception as e:
+        st.error(f"Error al mostrar tabla de mareas: {str(e)}")
 
 def display_wind_rose(forecast):
-    df = pd.DataFrame([{
-        "deg": item["wind"]["deg"],
-        "speed": item["wind"]["speed"]
-    } for item in forecast["list"]])
-    
-    # Create wind direction bins (16 directions)
-    bins = np.linspace(0, 360, 17)
-    labels = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
-              'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
-    df['direction'] = pd.cut(df['deg'], bins=bins, labels=labels, include_lowest=True)
-    
-    # Calculate frequency for each direction and speed
-    direction_counts = df.groupby('direction')['speed'].value_counts().unstack(fill_value=0)
-    
-    # Create the wind rose using go.Barpolar
-    fig = go.Figure()
-    
-    # Speed bins
-    speed_bins = [0, 2, 4, 6, 8, 10, np.inf]
-    speed_labels = ['0-2', '2-4', '4-6', '6-8', '8-10', '>10']
-    colors = px.colors.sequential.Blues[1:]
-    
-    for i in range(len(speed_bins)-1):
-        mask = (df['speed'] >= speed_bins[i]) & (df['speed'] < speed_bins[i+1])
-        counts = df[mask].groupby('direction').size()
+    if not forecast or "list" not in forecast:
+        st.error("No hay datos de viento disponibles")
+        return
         
-        fig.add_trace(go.Barpolar(
-            r=counts.values,
-            theta=counts.index,
-            name=f'{speed_labels[i]} m/s',
-            marker_color=colors[i],
-            opacity=0.7
-        ))
-    
-    fig.update_layout(
-        title="Rosa de los Vientos",
-        font_size=10,
-        legend_title="Velocidad (m/s)",
-        polar=dict(
-            radialaxis=dict(showticklabels=True, gridcolor="lightgray"),
-            angularaxis=dict(direction="clockwise", rotation=90)
-        ),
-        showlegend=True
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+    try:
+        df = pd.DataFrame([{
+            "deg": item["wind"]["deg"],
+            "speed": item["wind"]["speed"]
+        } for item in forecast["list"]])
+        
+        # Create wind direction bins (16 directions)
+        bins = np.linspace(0, 360, 17)
+        labels = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+                'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+        df['direction'] = pd.cut(df['deg'], bins=bins, labels=labels, include_lowest=True)
+        
+        # Calculate frequency for each direction and speed
+        direction_counts = df.groupby('direction')['speed'].value_counts().unstack(fill_value=0)
+        
+        # Create the wind rose using go.Barpolar
+        fig = go.Figure()
+        
+        # Speed bins
+        speed_bins = [0, 2, 4, 6, 8, 10, np.inf]
+        speed_labels = ['0-2', '2-4', '4-6', '6-8', '8-10', '>10']
+        colors = px.colors.sequential.Blues[1:]
+        
+        for i in range(len(speed_bins)-1):
+            mask = (df['speed'] >= speed_bins[i]) & (df['speed'] < speed_bins[i+1])
+            counts = df[mask].groupby('direction').size()
+            
+            fig.add_trace(go.Barpolar(
+                r=counts.values,
+                theta=counts.index,
+                name=f'{speed_labels[i]} m/s',
+                marker_color=colors[i],
+                opacity=0.7
+            ))
+        
+        fig.update_layout(
+            title="Rosa de los Vientos",
+            font_size=10,
+            legend_title="Velocidad (m/s)",
+            polar=dict(
+                radialaxis=dict(showticklabels=True, gridcolor="lightgray"),
+                angularaxis=dict(direction="clockwise", rotation=90)
+            ),
+            showlegend=True
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"Error al crear rosa de los vientos: {str(e)}")
 
 # --- Main ---
 def main():
@@ -237,8 +426,6 @@ def main():
         {"name": "Cancún, Q. Roo", "lat": 21.1619, "lon": -86.8515},
         {"name": "Frontera, Tabasco", "lat": 18.0000, "lon": -93.5000},
         {"name": "Ciudad del Carmen, Campeche", "lat": 18.6340, "lon": -91.8072}
-
-
     ]
     option = st.radio("Tipo:", ["Predefinidas", "Personalizada", "Guardadas"], horizontal=True)
 
@@ -273,7 +460,7 @@ def main():
             forecast = get_weather_forecast(lat, lon)
             tides = get_tide_data(lat, lon)
 
-        st.header(f"Clima para {choice if option=='Predefinidas' else name or 'ubicación'}")
+        st.header(f"Clima para {choice if option=='Predefinidas' or option=='Guardadas' else name or 'ubicación personalizada'}")
         display_current_weather(weather)
 
         st.header("Pronóstico")
