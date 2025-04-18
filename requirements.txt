@@ -12,3 +12,4 @@ requests
 numpy
 scipy>=1.11.0
 pyrebase4==4.7.1
+pkg_resources
