@@ -31,8 +31,8 @@ show_header(
     "Consulta datos de clima, viento y mareas para planificar tus actividades de pesca."
 )
 
-# --- API keys & URLs (move to env vars in production) ---
-OPENWEATHER_API_KEY = "4685c9a1c37d5805afcae030c9f2126d"
+# --- API keys & URLs (using Streamlit secrets) ---
+OPENWEATHER_API_KEY = st.secrets["openweather_api"]
 NOAA_API_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
 
 # --- Firestore helpers ---
