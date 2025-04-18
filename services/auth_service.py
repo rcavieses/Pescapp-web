@@ -2,7 +2,8 @@ import streamlit as st
 import firebase_admin
 from firebase_admin import auth, credentials, firestore
 from firebase_admin._auth_utils import UserNotFoundError
-import pyrebase
+import requests
+import json
 from services.firebase_service import get_collection, query_documents
 from services.user_service import get_user_by_email, create_user, get_user
 import os
@@ -12,80 +13,102 @@ import pytz
 import uuid
 import time
 
-# Inicializar Pyrebase (para autenticación de Firebase)
-def get_pyrebase_auth():
-    """Obtener objeto de autenticación de Pyrebase"""
-    if 'pyrebase_auth' not in st.session_state:
-        # Obtener configuración de Firebase
-        firebase_config = get_firebase_config()
-        
-        # Configurar Pyrebase
-        pyrebase_config = {
-            "apiKey": firebase_config.get("apiKey"),
-            "authDomain": firebase_config.get("authDomain"),
-            "databaseURL": firebase_config.get("databaseURL"),
-            "storageBucket": firebase_config.get("storageBucket"),
-            "projectId": firebase_config.get("projectId"),
-            "messagingSenderId": firebase_config.get("messagingSenderId"),
-            "appId": firebase_config.get("appId")
-        }
-        
-        # Inicializar Pyrebase
-        firebase = pyrebase.initialize_app(pyrebase_config)
-        
-        # Obtener objeto de autenticación
-        st.session_state['pyrebase_auth'] = firebase.auth()
-    
-    return st.session_state['pyrebase_auth']
+def get_firebase_auth():
+    """Get Firebase REST API authentication object with secrets configuration"""
+    if 'firebase_auth' not in st.session_state:
+        try:
+            # Obtain configuration from secrets.toml through firebase_config
+            firebase_config = get_firebase_config()
+            
+            if not firebase_config or 'config' not in firebase_config or 'apiKey' not in firebase_config['config']:
+                raise ValueError("Firebase configuration is missing required fields")
+                
+            st.session_state['firebase_auth'] = {
+                'api_key': firebase_config['config']['apiKey'],
+                'base_url': 'https://identitytoolkit.googleapis.com/v1'
+            }
+        except Exception as e:
+            st.error("""
+            Error loading Firebase authentication configuration. 
+            Please make sure you have set up your .streamlit/secrets.toml file with the required Firebase credentials.
+            Required fields in secrets.toml:
+            [firebase]
+            api_key = "your-api-key"
+            auth_domain = "your-auth-domain"
+            project_id = "your-project-id"
+            storage_bucket = "your-storage-bucket"
+            app_id = "your-app-id"
+            """)
+            raise e
+            
+    return st.session_state['firebase_auth']
 
-# Función para verificar las credenciales del usuario
+def sign_in_with_email_password(email, password):
+    """Sign in using Firebase REST API"""
+    auth_config = get_firebase_auth()
+    url = f"{auth_config['base_url']}/accounts:signInWithPassword?key={auth_config['api_key']}"
+    
+    payload = {
+        "email": email,
+        "password": password,
+        "returnSecureToken": True
+    }
+    
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        return True, response.json()
+    except requests.exceptions.HTTPError as e:
+        error_message = json.loads(e.response.text)['error']['message']
+        return False, error_message
+
 def verify_credentials(email, password):
     try:
-        # Get user by email
-        user = auth.get_user_by_email(email)
-        
-        # Create custom token
-        custom_token = auth.create_custom_token(user.uid)
-        
+        # Sign in using REST API
+        success, result = sign_in_with_email_password(email, password)
+        if not success:
+            return False, None, result
+            
         # Get user data from Firestore
         db = firestore.client()
-        user_ref = db.collection('users').document(user.uid).get()
+        user_ref = db.collection('users').document(result['localId']).get()
         
         if user_ref.exists:
             user_data = user_ref.to_dict()
-            user_data['id'] = user.uid
-            user_data['token'] = custom_token.decode('utf-8')
+            user_data['id'] = result['localId']
+            user_data['token'] = result['idToken']
             return True, user_data, "Login successful"
         else:
             return False, None, "User data not found"
             
-    except UserNotFoundError:
-        return False, None, "User not found"
     except Exception as e:
         return False, None, str(e)
 
-# Función para registrar un nuevo usuario
 def register_user(email, password, name, role="user"):
     try:
-        # Verificar si el usuario ya existe en Firestore
+        # Verificar si el usuario ya existe
         existing_user = get_user_by_email(email)
-        if existing_user:
+        if (existing_user):
             return False, "El correo electrónico ya está registrado"
         
-        # Obtener objeto de autenticación
-        firebase_auth = get_pyrebase_auth()
+        # Registrar usuario usando REST API
+        auth_config = get_firebase_auth()
+        url = f"{auth_config['base_url']}/accounts:signUp?key={auth_config['api_key']}"
         
-        # Crear usuario en Firebase Authentication
-        auth_user = firebase_auth.create_user_with_email_and_password(email, password)
+        payload = {
+            "email": email,
+            "password": password,
+            "returnSecureToken": True
+        }
         
-        # Obtener el ID de usuario asignado por Firebase
-        user_id = auth_user['localId']
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        result = response.json()
         
-        # Actualizar el perfil con el nombre
-        firebase_auth.update_profile(auth_user['idToken'], display_name=name)
+        user_id = result['localId']
         
         # Obtener zona horaria UTC-7 para la fecha de creación
-        tz = pytz.timezone('America/Denver')  # UTC-7
+        tz = pytz.timezone('America/Denver')
         created_at = datetime.now(tz).strftime("%d de %B de %Y, %I:%M:%S%p UTC-7")
         
         # Crear objeto de usuario para Firestore
@@ -100,20 +123,89 @@ def register_user(email, password, name, role="user"):
         # Almacenar el usuario en Firestore
         get_collection("users").document(user_id).set(user_data)
         
+        # Actualizar el perfil del usuario
+        update_profile_url = f"{auth_config['base_url']}/accounts:update?key={auth_config['api_key']}"
+        profile_payload = {
+            "idToken": result['idToken'],
+            "displayName": name,
+            "returnSecureToken": True
+        }
+        
+        requests.post(update_profile_url, json=profile_payload)
+        
         return True, "Usuario registrado exitosamente"
     
-    except Exception as e:
-        # Capturar errores específicos de Firebase
-        error_message = str(e)
+    except requests.exceptions.HTTPError as e:
+        error_message = json.loads(e.response.text)['error']['message']
         
-        if "EMAIL_EXISTS" in error_message:
+        if error_message == "EMAIL_EXISTS":
             return False, "El email ya está en uso"
-        elif "WEAK_PASSWORD" in error_message:
+        elif error_message == "WEAK_PASSWORD":
             return False, "La contraseña es demasiado débil, debe tener al menos 6 caracteres"
-        elif "INVALID_EMAIL" in error_message:
+        elif error_message == "INVALID_EMAIL":
             return False, "Formato de email inválido"
         else:
             return False, f"Error al registrar usuario: {error_message}"
+    except Exception as e:
+        return False, f"Error al registrar usuario: {str(e)}"
+
+def change_password(email, current_password, new_password):
+    try:
+        # Verificar credenciales actuales
+        success, result = sign_in_with_email_password(email, current_password)
+        if not success:
+            return False, "La contraseña actual es incorrecta"
+        
+        # Cambiar contraseña usando REST API
+        auth_config = get_firebase_auth()
+        url = f"{auth_config['base_url']}/accounts:update?key={auth_config['api_key']}"
+        
+        payload = {
+            "idToken": result['idToken'],
+            "password": new_password,
+            "returnSecureToken": True
+        }
+        
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        
+        return True, "Contraseña actualizada exitosamente"
+    
+    except requests.exceptions.HTTPError as e:
+        error_message = json.loads(e.response.text)['error']['message']
+        
+        if error_message == "INVALID_ID_TOKEN":
+            return False, "La sesión ha expirado, por favor inicie sesión nuevamente"
+        elif error_message == "WEAK_PASSWORD":
+            return False, "La nueva contraseña es demasiado débil"
+        else:
+            return False, f"Error al cambiar contraseña: {error_message}"
+    except Exception as e:
+        return False, f"Error al cambiar contraseña: {str(e)}"
+
+def reset_password(email):
+    """Send password reset email using REST API"""
+    try:
+        auth_config = get_firebase_auth()
+        url = f"{auth_config['base_url']}/accounts:sendOobCode?key={auth_config['api_key']}"
+        
+        payload = {
+            "requestType": "PASSWORD_RESET",
+            "email": email
+        }
+        
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        
+        return True, "Se ha enviado un enlace de restablecimiento de contraseña a su correo"
+    except requests.exceptions.HTTPError as e:
+        error_message = json.loads(e.response.text)['error']['message']
+        if error_message == "EMAIL_NOT_FOUND":
+            return False, "No existe una cuenta con este correo electrónico"
+        else:
+            return False, f"Error al enviar el correo de restablecimiento: {error_message}"
+    except Exception as e:
+        return False, f"Error al restablecer contraseña: {str(e)}"
 
 # Función para cerrar sesión
 def logout_user():
@@ -121,42 +213,6 @@ def logout_user():
     try:
         # Just clear session state since Firebase handles token invalidation
         return True, "Logout successful"
-    except Exception as e:
-        return False, str(e)
-
-# Función para cambiar contraseña
-def change_password(email, current_password, new_password):
-    try:
-        # Verificar credenciales actuales
-        firebase_auth = get_pyrebase_auth()
-        
-        # Iniciar sesión con email y contraseña actual
-        auth_user = firebase_auth.sign_in_with_email_and_password(email, current_password)
-        
-        # Cambiar contraseña
-        firebase_auth.change_password(auth_user['idToken'], new_password)
-        
-        return True, "Contraseña actualizada exitosamente"
-    
-    except Exception as e:
-        error_message = str(e)
-        
-        if "INVALID_PASSWORD" in error_message:
-            return False, "La contraseña actual es incorrecta"
-        elif "WEAK_PASSWORD" in error_message:
-            return False, "La nueva contraseña es demasiado débil"
-        else:
-            return False, f"Error al cambiar contraseña: {error_message}"
-
-# Función para recuperar contraseña
-def reset_password(email):
-    """Send password reset email"""
-    try:
-        # Generate password reset link
-        reset_link = auth.generate_password_reset_link(email)
-        # Here you would typically send this link via email
-        # For now just return success
-        return True, "Password reset link sent to email"
     except Exception as e:
         return False, str(e)
 
