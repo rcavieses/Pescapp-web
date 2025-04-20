@@ -17,6 +17,38 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Cache para obtener usuarios asignados
+@st.cache_data(ttl=300)  # Cache por 5 minutos
+def get_cached_assigned_users(user_id):
+    return get_assigned_users(user_id)
+
+# Cache para filtrar usuarios disponibles
+@st.cache_data(ttl=300)
+def get_available_users(user_role, user_id, all_users_df):
+    if user_role == 'admin':
+        return all_users_df
+    elif user_role == 'monitor':
+        assigned_users = get_cached_assigned_users(user_id)
+        assigned_user_ids = [user['id'] if isinstance(user, dict) else user.id for user in assigned_users]
+        assigned_user_ids.append(user_id)
+        return all_users_df[all_users_df['user_id'].isin(assigned_user_ids)] if all_users_df is not None else None
+    else:
+        return all_users_df[all_users_df['user_id'] == user_id] if all_users_df is not None else None
+
+# Cache para filtrar datos según permisos
+@st.cache_data(ttl=300)
+def filter_data_by_permissions(travels_df, coords_df, available_user_ids):
+    if travels_df is not None:
+        filtered_travels = travels_df[travels_df['user_id'].isin(available_user_ids)]
+        
+        if coords_df is not None:
+            available_travel_ids = filtered_travels['travel_id'].unique().tolist()
+            filtered_coords = coords_df[coords_df['travel_id'].isin(available_travel_ids)]
+            return filtered_travels, filtered_coords
+        
+        return filtered_travels, None
+    return None, None
+
 # Crear instancia de autenticación
 auth = Authentication()
 
@@ -50,31 +82,20 @@ def main():
     # Cargar los datos cuando se haga clic en el botón
     if st.button("Cargar Datos", use_container_width=True):
         with st.spinner("Cargando datos..."):
-            # Obtener usuarios disponibles según el rol
-            if user_role == 'admin':
-                users_df = load_users(limit=2000)
-            elif user_role == 'monitor':
-                assigned_users = get_assigned_users(user_id)
-                assigned_user_ids = [user['id'] if isinstance(user, dict) else user.id for user in assigned_users]
-                assigned_user_ids.append(user_id)
-                all_users_df = load_users(limit=2000)
-                users_df = all_users_df[all_users_df['user_id'].isin(assigned_user_ids)] if all_users_df is not None else None
-            else:
-                all_users_df = load_users(limit=2000)
-                users_df = all_users_df[all_users_df['user_id'] == user_id] if all_users_df is not None else None
+            # Cargar datos base
+            all_users_df = load_users(limit=2000)
+            
+            # Obtener usuarios disponibles según el rol usando caché
+            users_df = get_available_users(user_role, user_id, all_users_df)
             
             # Cargar viajes y coordenadas
             travels_df = load_travels(limit=2000)
             coords_df = load_coords(limit=2000)
             
-            # Filtrar datos según permisos
-            if travels_df is not None and users_df is not None:
+            # Filtrar datos según permisos usando caché
+            if users_df is not None:
                 available_user_ids = users_df['user_id'].unique().tolist()
-                travels_df = travels_df[travels_df['user_id'].isin(available_user_ids)]
-                
-                if coords_df is not None:
-                    available_travel_ids = travels_df['travel_id'].unique().tolist()
-                    coords_df = coords_df[coords_df['travel_id'].isin(available_travel_ids)]
+                travels_df, coords_df = filter_data_by_permissions(travels_df, coords_df, available_user_ids)
             
             # Guardar en session state
             st.session_state.users_df = users_df

@@ -5,6 +5,12 @@ from streamlit_folium import folium_static
 import pandas as pd
 from services.travel_service import get_all_travel_coordinates, get_travel
 import random
+from .map_visualization_helper import (
+    calculate_map_bounds,
+    process_coordinates,
+    create_map_layers,
+    get_map_tiles
+)
 
 # Función para crear un mapa base
 def create_base_map(center=[20, 0], zoom=2):
@@ -141,126 +147,94 @@ def heatmap_component():
     # Convertir coordenadas a DataFrame para facilitar el manejo
     df = pd.DataFrame(valid_coordinates)
 
-def create_travel_map(valid_coords):
-    """Creates and returns a map with travel data visualization"""
-    if len(valid_coords) == 0:
-        return None
-    
-    # Calculate map center
-    center = [valid_coords['lat'].mean(), valid_coords['lon'].mean()]
-    
-    # Create base map
-    m = folium.Map(location=center, zoom_start=10, control_scale=True)
-    
-    # Add map controls
-    folium.LayerControl().add_to(m)
-    
-    # Colors for each trip
-    colors = ['red', 'blue', 'green', 'purple', 'orange', 'darkred', 
-            'lightblue', 'darkgreen', 'cadetblue', 'darkpurple', 
-            'beige', 'pink', 'gray', 'black', 'lightred', 'lightgreen']
-    
-    # Get unique travel IDs
-    travel_ids = valid_coords['travel_id'].unique()
-    
-    # Process points for each trip
-    for i, travel_id in enumerate(travel_ids):
-        # Select color for this trip
-        color = colors[i % len(colors)]
-        
-        # Filter coordinates for this trip
-        travel_coords = valid_coords[valid_coords['travel_id'] == travel_id].copy()
-        
-        # Sort by timestamp if available
-        if 'timestamp' in travel_coords.columns:
-            try:
-                travel_coords['timestamp'] = pd.to_datetime(travel_coords['timestamp'], errors='coerce')
-                travel_coords = travel_coords.sort_values('timestamp')
-            except:
-                pass
-        
-        # Create coordinate list for the line
-        line_coords = []
-        
-        # Add markers and collect coordinates for the line
-        for idx, row in travel_coords.iterrows():
-            line_coords.append([row['lat'], row['lon']])
-            
-            # Create popup text
-            popup_text = f"<b>ID de Viaje:</b> {travel_id}<br>"
-            
-            if 'user_email' in row and pd.notna(row['user_email']):
-                popup_text += f"<b>Usuario:</b> {row['user_email']}<br>"
-            
-            if 'timestamp' in row and pd.notna(row['timestamp']):
-                popup_text += f"<b>Fecha:</b> {row['timestamp']}<br>"
-            
-            if 'accuracy' in row and pd.notna(row['accuracy']):
-                popup_text += f"<b>Precisión:</b> {row['accuracy']} m<br>"
-            
-            if 'altitude' in row and pd.notna(row['altitude']):
-                popup_text += f"<b>Altitud:</b> {row['altitude']} m<br>"
-            
-            if 'speed' in row and pd.notna(row['speed']):
-                popup_text += f"<b>Velocidad:</b> {row['speed']} km/h<br>"
-            
-            # Create marker
-            folium.Marker(
-                location=[row['lat'], row['lon']],
-                popup=folium.Popup(popup_text, max_width=300),
-                tooltip=f"Viaje: {travel_id}",
-                icon=folium.Icon(color=color, icon='info-sign')
-            ).add_to(m)
-        
-        # Draw dotted line if there are at least 2 points
-        if len(line_coords) >= 2:
-            folium.PolyLine(
-                locations=line_coords,
-                color=color,
-                weight=3,
-                opacity=0.7,
-                dash_array='5, 10',
-                tooltip=f"Ruta del viaje: {travel_id}"
-            ).add_to(m)
-        
-        # Add accuracy circles if available
-        if 'accuracy' in travel_coords.columns:
-            for idx, row in travel_coords.iterrows():
-                if pd.notna(row['accuracy']) and float(row['accuracy']) > 0:
-                    folium.Circle(
-                        location=[row['lat'], row['lon']],
-                        radius=float(row['accuracy']),
-                        color=color,
-                        fill=True,
-                        fill_opacity=0.1
-                    ).add_to(m)
-    
-    return m
-
-def validate_coordinates(coords_df):
-    """Validates and filters coordinate data"""
+@st.cache_data(ttl=300)
+def create_travel_map(coords_df):
+    """Crea un mapa interactivo con las coordenadas de los viajes"""
     if coords_df is None or len(coords_df) == 0:
         return None
-        
-    # Verify we have valid coordinates to show
-    valid_coords = coords_df.dropna(subset=['lat', 'lon']).copy()
     
-    if len(valid_coords) == 0:
+    try:
+        # Procesar coordenadas
+        valid_coords = validate_coordinates(coords_df)
+        if valid_coords is None:
+            return None
+        
+        # Calcular límites del mapa
+        bounds = calculate_map_bounds(valid_coords)
+        if bounds is None:
+            return None
+        
+        # Calcular centro del mapa
+        center_lat = (bounds[0][0] + bounds[1][0]) / 2
+        center_lon = (bounds[0][1] + bounds[1][1]) / 2
+        
+        # Crear mapa base
+        m = folium.Map(
+            location=[center_lat, center_lon],
+            zoom_start=10,
+            control_scale=True
+        )
+        
+        # Obtener capas del mapa
+        layers = create_map_layers(valid_coords)
+        if layers is None:
+            return None
+        
+        # Añadir capas al mapa
+        for layer in layers.values():
+            layer.add_to(m)
+        
+        # Añadir control de capas
+        folium.LayerControl().add_to(m)
+        
+        # Añadir plugins útiles
+        folium.plugins.Fullscreen().add_to(m)
+        folium.plugins.MousePosition().add_to(m)
+        folium.plugins.MeasureControl().add_to(m)
+        
+        # Añadir selector de tiles
+        tiles = get_map_tiles()
+        for tile_name, tile_url in tiles.items():
+            if tile_name != 'OpenStreetMap':  # OpenStreetMap ya está como base
+                folium.TileLayer(
+                    tiles=tile_url,
+                    name=tile_name,
+                    attr='Map tiles by Stamen Design'
+                ).add_to(m)
+        
+        # Ajustar a los límites
+        m.fit_bounds(bounds)
+        
+        return m
+        
+    except Exception as e:
+        print(f"Error creando mapa: {e}")
         return None
-        
-    # Ensure lat and lon are numeric values
-    valid_coords['lat'] = pd.to_numeric(valid_coords['lat'], errors='coerce')
-    valid_coords['lon'] = pd.to_numeric(valid_coords['lon'], errors='coerce')
-    
-    # Remove rows with non-numeric values or out of range
-    valid_coords = valid_coords[
-        (valid_coords['lat'] >= -90) & 
-        (valid_coords['lat'] <= 90) & 
-        (valid_coords['lon'] >= -180) & 
-        (valid_coords['lon'] <= 180)
-    ]
-    
-    if len(valid_coords) == 0:
+
+@st.cache_data(ttl=300)
+def validate_coordinates(coords_df):
+    """Valida y procesa las coordenadas para el mapa"""
+    return process_coordinates(coords_df)
+
+@st.cache_data(ttl=300)
+def generate_map_statistics(coords_df):
+    """Genera estadísticas del mapa"""
+    if coords_df is None or len(coords_df) == 0:
         return None
+    
+    try:
+        stats = {
+            'total_points': len(coords_df),
+            'unique_travels': len(coords_df['travel_id'].unique()),
+            'date_range': [
+                coords_df['timestamp'].min(),
+                coords_df['timestamp'].max()
+            ] if 'timestamp' in coords_df.columns else None,
+            'bounds': calculate_map_bounds(coords_df)
+        }
         
-    return valid_coords
+        return stats
+        
+    except Exception as e:
+        print(f"Error generando estadísticas: {e}")
+        return None

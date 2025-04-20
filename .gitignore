@@ -172,3 +172,4 @@ cython_debug/
 .devcontainer/devcontainer.json
 creds.json
 .streamlit/secrets.toml
+*.pdf

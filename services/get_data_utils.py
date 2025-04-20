@@ -3,12 +3,14 @@ import pandas as pd
 from services.firebase_service import get_collection
 from services.travel_service import get_assigned_users
 
-def load_coords(limit=2000):
+@st.cache_data(ttl=300)  # Cache por 5 minutos
+def load_coords(limit=2000, skip=0):
     """
     Carga registros directamente de la colección coords
     
     Args:
         limit: Número máximo de registros a cargar
+        skip: Número de registros a saltar (para paginación)
     
     Returns:
         DataFrame con los registros de coordenadas
@@ -20,8 +22,8 @@ def load_coords(limit=2000):
             st.error("No se pudo acceder a la colección 'coords'")
             return None
         
-        # Obtener documentos
-        coords_docs = list(coords_collection.limit(limit).stream())
+        # Obtener documentos con paginación
+        coords_docs = list(coords_collection.offset(skip).limit(limit).stream())
         
         if not coords_docs:
             st.warning("No se encontraron registros en la colección 'coords'")
@@ -79,12 +81,14 @@ def load_coords(limit=2000):
         st.error(f"Error al cargar coordenadas: {str(e)}")
         return None
 
-def load_travels(limit=2000):
+@st.cache_data(ttl=300)  # Cache por 5 minutos
+def load_travels(limit=2000, skip=0):
     """
     Carga registros directamente de la colección travels
     
     Args:
         limit: Número máximo de registros a cargar
+        skip: Número de registros a saltar (para paginación)
     
     Returns:
         DataFrame con los registros de viajes
@@ -96,8 +100,8 @@ def load_travels(limit=2000):
             st.error("No se pudo acceder a la colección 'travels'")
             return None
         
-        # Obtener documentos
-        travels_docs = list(travels_collection.limit(limit).stream())
+        # Obtener documentos con paginación
+        travels_docs = list(travels_collection.offset(skip).limit(limit).stream())
         
         if not travels_docs:
             st.warning("No se encontraron registros en la colección 'travels'")
@@ -158,12 +162,14 @@ def load_travels(limit=2000):
         st.error(f"Error al cargar viajes: {str(e)}")
         return None
 
-def load_users(limit=2000):
+@st.cache_data(ttl=300)  # Cache por 5 minutos
+def load_users(limit=2000, skip=0):
     """
     Carga registros directamente de la colección users
     
     Args:
         limit: Número máximo de registros a cargar
+        skip: Número de registros a saltar (para paginación)
     
     Returns:
         DataFrame con los registros de usuarios
@@ -175,8 +181,8 @@ def load_users(limit=2000):
             st.error("No se pudo acceder a la colección 'users'")
             return None
         
-        # Obtener documentos
-        users_docs = list(users_collection.limit(limit).stream())
+        # Obtener documentos con paginación
+        users_docs = list(users_collection.offset(skip).limit(limit).stream())
         
         if not users_docs:
             st.warning("No se encontraron registros en la colección 'users'")
@@ -231,6 +237,32 @@ def load_users(limit=2000):
         st.error(f"Error al cargar usuarios: {str(e)}")
         return None
 
+@st.cache_data(ttl=300)  # Cache por 5 minutos
+def get_collection_count(collection_name):
+    """
+    Obtiene el número total de documentos en una colección
+    
+    Args:
+        collection_name: Nombre de la colección
+        
+    Returns:
+        Número total de documentos
+    """
+    try:
+        collection = get_collection(collection_name)
+        if not collection:
+            return 0
+            
+        # Realizar consulta para contar documentos
+        count_query = collection.count()
+        count = count_query.get()
+        return count[0][0].value
+        
+    except Exception as e:
+        print(f"Error al obtener conteo de {collection_name}: {str(e)}")
+        return 0
+
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def filter_data_by_user(users_df, travels_df, coords_df, selected_user_option):
     """Filter data based on selected user"""
     filtered_users_df = users_df.copy()
@@ -245,7 +277,7 @@ def filter_data_by_user(users_df, travels_df, coords_df, selected_user_option):
         filtered_user_ids = filtered_users_df['user_id'].unique().tolist()
         
         # Filtrar viajes por IDs de usuario
-        filtered_travels_df = travels_df[travels_df['user_id'].isin(filtered_user_ids)]
+        filtered_travels_df = travels_df[filtered_travels_df['user_id'].isin(filtered_user_ids)]
         
         # Obtener los IDs de viaje filtrados
         filtered_travel_ids = filtered_travels_df['travel_id'].unique().tolist()
@@ -255,6 +287,7 @@ def filter_data_by_user(users_df, travels_df, coords_df, selected_user_option):
     
     return filtered_users_df, filtered_travels_df, filtered_coords_df
 
+@st.cache_data(ttl=300)  # Cache por 5 minutos
 def filter_by_travel_ids(filtered_travels_df, filtered_coords_df, selected_travel_ids):
     """Filter data based on selected travel IDs"""
     if "Todos los viajes" not in selected_travel_ids and selected_travel_ids:

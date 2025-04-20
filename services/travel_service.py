@@ -345,3 +345,66 @@ def get_assigned_users(monitor_id):
             users.append(user_data)
     
     return users
+
+def get_coords_from_collection(limit=500):
+    """
+    Obtiene coordenadas directamente de la colección 'coords'.
+    Útil para depuración y visualización directa de coordenadas.
+    
+    Args:
+        limit (int): Número máximo de coordenadas a retornar
+        
+    Returns:
+        list: Lista de diccionarios con las coordenadas
+    """
+    try:
+        # Obtener referencia a la colección
+        coords_ref = get_collection("coords")
+        if not coords_ref:
+            print("No se pudo acceder a la colección 'coords'")
+            return []
+        
+        # Obtener documentos con límite
+        coords_docs = coords_ref.limit(limit).stream()
+        
+        coordinates = []
+        for doc in coords_docs:
+            coord_data = doc.to_dict()
+            
+            # Verificar si las coordenadas están en un campo anidado
+            if "coords" in coord_data and isinstance(coord_data["coords"], dict):
+                coords = coord_data["coords"]
+                lat = coords.get("lat")
+                lon = coords.get("lon")
+            else:
+                # Si no están anidadas, buscar en el nivel superior
+                lat = coord_data.get("lat")
+                lon = coord_data.get("lon")
+            
+            # Solo añadir si tenemos coordenadas válidas
+            if lat is not None and lon is not None:
+                coord_entry = {
+                    "lat": lat,
+                    "lon": lon,
+                    "timestamp": normalize_timestamp(coord_data.get("timestamp")),
+                    "travel_id": coord_data.get("travel_id") or coord_data.get("id") or doc.id,
+                }
+                
+                # Añadir campos adicionales si existen
+                for field in ["accuracy", "altitude", "speed", "user_id", "user_email"]:
+                    if field in coord_data:
+                        coord_entry[field] = coord_data[field]
+                
+                coordinates.append(coord_entry)
+        
+        # Ordenar por timestamp si es posible
+        try:
+            coordinates.sort(key=lambda x: x.get("timestamp", ""))
+        except Exception as e:
+            print(f"Error al ordenar coordenadas: {e}")
+        
+        return coordinates
+        
+    except Exception as e:
+        print(f"Error al obtener coordenadas de la colección: {e}")
+        return []
