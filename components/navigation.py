@@ -10,7 +10,7 @@ def setup_sidebar():
     user = auth.get_current_user()
     
     if user:
-        st.sidebar.title("🌍 Travel Tracker")
+        st.sidebar.title("🌍 PescApp")
         
         # Mostrar información del usuario
         st.sidebar.write(f"**Usuario:** {user.get('name', 'Usuario')}")
@@ -49,4 +49,4 @@ def show_footer():
         st.markdown("Desarrollado con Streamlit y Firebase")
     
     with col3:
-        st.markdown("Versión 2.0.0")
+        st.markdown("Versión 2.0.1")

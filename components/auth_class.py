@@ -38,7 +38,7 @@ class Authentication:
         """
         Handle user login process
         """
-        st.title("🌍 Travel Tracker - Iniciar Sesión")
+        st.title("🌍 PescApp - Iniciar Sesión")
         
         with st.form("login_form"):
             email = st.text_input("Correo Electrónico")
@@ -117,7 +117,7 @@ class Authentication:
         """
         Handle user registration process
         """
-        st.title("🌍 Travel Tracker - Registro")
+        st.title("🌍 PescApp - Registro")
         
         with st.form("registration_form"):
             name = st.text_input("Nombre completo")
