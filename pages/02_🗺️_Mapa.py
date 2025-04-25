@@ -167,7 +167,7 @@ def main():
                     st.write(f"Mostrando {len(valid_coords)} coordenadas en el mapa.")
                     
                     # Crear y mostrar mapa usando la nueva función no cacheada
-                    m = create_folium_map(valid_coords)
+                    m = create_travel_map(valid_coords)
                     if m is not None:
                         folium_static(m, width=1000, height=600)
                 
