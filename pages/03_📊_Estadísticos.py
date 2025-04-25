@@ -34,6 +34,30 @@ show_header(
     "Análisis y visualización de los datos de viajes registrados."
 )
 
+def flatten_travel_data(travels):
+    """
+    Flatten nested dictionary data from travels for DataFrame compatibility, ensuring all values are hashable
+    """
+    flattened_travels = []
+    for travel in travels:
+        flat_travel = {}
+        for key, value in travel.items():
+            # Skip known nested objects
+            if key in ['coordinates', 'weather', 'metadata']:
+                continue
+            
+            # Convert dictionary values to string representation
+            if isinstance(value, dict):
+                flat_travel[key] = str(value)
+            # Convert list values to string representation
+            elif isinstance(value, list):
+                flat_travel[key] = str(value)
+            # Keep simple values as they are
+            else:
+                flat_travel[key] = value
+        flattened_travels.append(flat_travel)
+    return flattened_travels
+
 # Función principal
 def main():
     # Determinar qué viajes mostrar según el rol del usuario
@@ -83,8 +107,11 @@ def main():
         st.warning("No hay viajes disponibles para analizar.")
         return
     
+    # Aplanar los datos antes de convertirlos a DataFrame
+    flattened_travels = flatten_travel_data(travels)
+    
     # Convertir a DataFrame para análisis
-    df = pd.DataFrame(travels)
+    df = pd.DataFrame(flattened_travels)
     
     # Procesamiento de datos
     if 'timestamp' in df.columns:
