@@ -164,9 +164,42 @@ def show_direct_coords_map():
     except Exception as e:
         st.error(f"Error al procesar coordenadas: {str(e)}")
 
+@st.cache_data(ttl=300)
+def process_map_data(df):
+    """
+    Procesa los datos para el mapa y retorna un diccionario con datos serializables
+    """
+    try:
+        # Asegurar que lat/lon son numéricos
+        df['lat'] = pd.to_numeric(df['lat'], errors='coerce')
+        df['lon'] = pd.to_numeric(df['lon'], errors='coerce')
+        
+        # Eliminar filas con valores NaN
+        df = df.dropna(subset=['lat', 'lon'])
+        
+        # Preparar datos para el mapa
+        map_data = {
+            'coordinates': df[['lat', 'lon']].values.tolist(),
+            'travel_ids': df['travel_id'].unique().tolist(),
+            'center': [df['lat'].mean(), df['lon'].mean()],
+            'bounds': [
+                [df['lat'].min(), df['lon'].min()],
+                [df['lat'].max(), df['lon'].max()]
+            ]
+        }
+        
+        # Añadir datos adicionales si están disponibles
+        if 'timestamp' in df.columns:
+            map_data['timestamps'] = df['timestamp'].tolist()
+            
+        return map_data
+    except Exception as e:
+        print(f"Error al procesar datos del mapa: {str(e)}")
+        return None
+
 def create_folium_map(df, width=800, height=600):
     """
-    Crea y muestra un mapa de Folium con las coordenadas proporcionadas
+    Crea y muestra un mapa de Folium con las coordenadas procesadas
     
     Args:
         df: DataFrame de pandas con columnas 'lat' y 'lon'
@@ -174,11 +207,13 @@ def create_folium_map(df, width=800, height=600):
         height: Alto del mapa
     """
     try:
-        # Calcular el centro del mapa
-        center = [df['lat'].mean(), df['lon'].mean()]
-        
-        # Crear mapa base
-        m = folium.Map(location=center, zoom_start=10, control_scale=True)
+        # Procesar datos primero (esto será cacheado)
+        map_data = process_map_data(df)
+        if not map_data:
+            return None
+            
+        # Crear mapa base con el centro calculado
+        m = folium.Map(location=map_data['center'], zoom_start=10, control_scale=True)
         
         # Añadir controles
         folium.LayerControl().add_to(m)
@@ -190,62 +225,44 @@ def create_folium_map(df, width=800, height=600):
         colors = ['red', 'blue', 'green', 'purple', 'orange', 'darkred', 'lightblue', 
                  'darkgreen', 'cadetblue', 'darkpurple', 'beige', 'pink', 'gray']
         
-        # Agrupar por travel_id
-        travel_ids = df['travel_id'].unique()
-        
-        # Mostrar información sobre los viajes
-        st.write(f"Total de viajes en el mapa: {len(travel_ids)}")
-        
-        # Añadir marcadores para cada punto
-        for i, travel_id in enumerate(travel_ids):
-            # Seleccionar color para este viaje
+        # Crear las capas del mapa usando los datos procesados
+        for i, travel_id in enumerate(map_data['travel_ids']):
             color = colors[i % len(colors)]
             
-            # Filtrar puntos de este viaje
+            # Filtrar puntos para este viaje
             travel_points = df[df['travel_id'] == travel_id]
+            point_coords = travel_points[['lat', 'lon']].values.tolist()
             
-            # Crear lista de coordenadas
-            line_coords = []
-            
-            # Añadir marcadores
-            for idx, row in travel_points.iterrows():
-                # Añadir a la lista de coordenadas para la línea
-                line_coords.append([row['lat'], row['lon']])
-                
-                # Crear popup con información disponible
+            # Añadir marcadores y líneas
+            for j, point in enumerate(point_coords):
                 popup_text = f"Viaje: {travel_id}"
-                for col in travel_points.columns:
-                    if col not in ['lat', 'lon', 'travel_id'] and pd.notna(row[col]):
-                        popup_text += f"<br>{col}: {row[col]}"
+                if 'timestamps' in map_data:
+                    popup_text += f"<br>Tiempo: {map_data['timestamps'][j]}"
                 
-                # Crear tooltip (etiqueta al pasar el mouse)
-                travel_id_str = str(travel_id)
-                short_id = travel_id_str[:8] + "..." if len(travel_id_str) > 8 else travel_id_str
-                tooltip = f"Viaje: {short_id}"
-                
-                # Añadir marcador al mapa
                 folium.Marker(
-                    location=[row['lat'], row['lon']],
+                    location=point,
                     popup=popup_text,
-                    tooltip=tooltip,
+                    tooltip=f"Viaje: {travel_id}",
                     icon=folium.Icon(color=color, icon='info-sign')
                 ).add_to(m)
             
             # Añadir línea si hay más de un punto
-            if len(line_coords) >= 2:
+            if len(point_coords) >= 2:
                 folium.PolyLine(
-                    locations=line_coords,
+                    locations=point_coords,
                     color=color,
                     weight=2.5,
-                    opacity=0.7,
-                    tooltip=f"Ruta viaje: {short_id}"
+                    opacity=0.7
                 ).add_to(m)
         
-        # Mostrar el mapa
-        folium_static(m, width=width, height=height)
+        # Ajustar a los límites
+        m.fit_bounds(map_data['bounds'])
+        
+        return m
         
     except Exception as e:
-        st.error(f"Error al crear el mapa: {str(e)}")
+        print(f"Error al crear el mapa: {str(e)}")
+        return None
 
 def quick_map_visualization():
     """

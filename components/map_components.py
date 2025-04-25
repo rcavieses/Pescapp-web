@@ -147,7 +147,6 @@ def heatmap_component():
     # Convertir coordenadas a DataFrame para facilitar el manejo
     df = pd.DataFrame(valid_coordinates)
 
-@st.cache_data(ttl=300)
 def create_travel_map(coords_df):
     """Crea un mapa interactivo con las coordenadas de los viajes"""
     if coords_df is None or len(coords_df) == 0:
@@ -188,9 +187,9 @@ def create_travel_map(coords_df):
         folium.LayerControl().add_to(m)
         
         # Añadir plugins útiles
-        folium.plugins.Fullscreen().add_to(m)
-        folium.plugins.MousePosition().add_to(m)
-        folium.plugins.MeasureControl().add_to(m)
+        plugins.Fullscreen().add_to(m)
+        plugins.MousePosition().add_to(m)
+        plugins.MeasureControl().add_to(m)
         
         # Añadir selector de tiles
         tiles = get_map_tiles()

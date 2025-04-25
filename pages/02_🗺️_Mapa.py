@@ -158,7 +158,7 @@ def main():
             if filtered_coords_df is not None:
                 st.subheader("🗺️ Mapa de Coordenadas")
                 
-                # Validar coordenadas
+                # Validar coordenadas (usando caché)
                 valid_coords = validate_coordinates(filtered_coords_df)
                 
                 if valid_coords is None:
@@ -166,8 +166,8 @@ def main():
                 else:
                     st.write(f"Mostrando {len(valid_coords)} coordenadas en el mapa.")
                     
-                    # Crear y mostrar mapa
-                    m = create_travel_map(valid_coords)
+                    # Crear y mostrar mapa usando la nueva función no cacheada
+                    m = create_folium_map(valid_coords)
                     if m is not None:
                         folium_static(m, width=1000, height=600)
                 
