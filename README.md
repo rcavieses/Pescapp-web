@@ -77,9 +77,7 @@ Para soporte técnico, contactar a:
 
 Esta aplicación es un proyecto académico desarrollado con fines de investigación y demostración. No debe considerarse como una herramienta de seguridad o sistema de auxilio en tiempo real. ECOSUR y UABC proporcionan esta plataforma en su estado actual, sin garantías específicas sobre su funcionamiento o precisión.
 
-## 📄 Licencia
 
-[Especificar tipo de licencia]
 
 ---
 Desarrollado con ❤️ por el equipo de PescApp 🎣
